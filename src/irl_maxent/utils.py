@@ -89,30 +89,42 @@ def plot_reward_and_expert_trajectories(world,
     fig.tight_layout()
     plt.show()
 
-def plot_trajectory(traj):
+def plot_trajectory(traj,n_col,n_row):
+
+    #
+    #print ("plotting trajectory: ", traj)
 
     # compute locations
-    loc_ids = np.arange(25)
+    loc_ids = np.arange(n_col*n_row)
     loc_xy = np.zeros((loc_ids.shape[0],2))
     for k in range(loc_ids.shape[0]):
         #print (loc_xy[k], )
-        loc_xy[k] = [loc_ids[k]%5, loc_ids[k]//5]
+        loc_xy[k] = [loc_ids[k]%n_col, loc_ids[k]//n_col]
         #print (k, loc_xy[k])
 
     #
     colors = plt.cm.jet(np.linspace(0,1,traj.shape[0]))
 
     # make grid world:
-    for k in range(6):
-        plt.plot([0,5],[k,k],
-                 c='black')
+    for k in range(n_row+1):
+        plt.plot([0,n_col],[k,k],
+                 c='black',
+                 alpha=0.2)
         #break
-    for k in range(6):
-        plt.plot([k,k],[0,5],
-                 c='black')
+    for k in range(n_col+1):
+        plt.plot([k,k],[0,n_row],
+                 c='black',
+                 alpha=0.2)
+    #
+    for k in range(n_col*n_row):
+        if k%100==0:
+            plt.text(k%n_col+0.5, k//n_col+0.5, str(k),
+                     fontsize=6)
 
+
+    print ("plotted traj: ", np.vstack(traj))
     for k in range(traj.shape[0]):
-        t = traj[k]
+        #t = traj[k]
         s = traj[k][0]
         e = traj[k][2]
 
