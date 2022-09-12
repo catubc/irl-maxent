@@ -7,6 +7,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from tqdm import trange
+from itertools import product
+from itertools import chain
 
 #
 import gridworld as W                       # basic grid-world MDPs
@@ -60,7 +62,7 @@ def generate_expert_trajectories(world, reward, terminal):
 #
 def plot_reward_and_expert_trajectories(world,
                                         reward,
-                                        #style,
+                                        style,
                                         expert_policy,
                                         trajectories):
     style = {                                   # global style for plots
@@ -91,7 +93,9 @@ def plot_reward_and_expert_trajectories(world,
     plt.show()
 
 #
-def plot_trajectory_simulated(traj,n_col,n_row):
+def plot_trajectory_simulated(traj,
+                              n_col=5,
+                              n_row=5):
 
     #
     #print ("plotting trajectory: ", traj)
@@ -147,16 +151,16 @@ def plot_trajectory_gerbils(traj,
     #
     colors = plt.cm.jet(np.linspace(0,1,traj.shape[0]))
 
-    # make grid world:
-    for k in range(n_row+2):
-        plt.plot([0,n_col-1],
-                 [k-1,k-1],
+    # plot horizontal bars
+    for k in range(0, n_row+1,1):
+        plt.plot([0,n_col],
+                 [k,k],
                  c='black',
                  alpha=0.2)
-        #break
-    for k in range(n_col):
+    # plot vertical bars
+    for k in range(n_col+1):
         plt.plot([k,k],
-                 [-1,n_row],
+                 [0,n_row],
                  c='black',
                  alpha=0.2)
     #
@@ -292,30 +296,182 @@ def fix_trajectories(track_xy1,
     return track_xy1
 
 
+class GerbilWorld():
+
+    def __init__(self,
+                 box_width,
+                 box_height,
+                 grid_width):
+
+        #
+        self.box_width = box_width
+        self.box_height = box_height
+        self.grid_width = grid_width
+
+        #
+        self.make_world()
+
+        #
+        self.p_transition = self._transition_prob_table()
+
+    def make_world(self):
+
+
+        self.n_col = self.box_width // self.grid_width
+        self.n_row = self.box_height // self.grid_width
+        self.n_states = self.n_col*self.n_row
+
+        #
+        self.size = self.n_col
+        self.actions = [(1, 0), (-1, 0), (0, 1), (0, -1)]
+        self.n_states = self.size**2
+        self.n_actions = len(self.actions)
+
+        # make a 2d array holding all the state locations
+        grid_states = np.arange(self.n_states, dtype='int32')
+        grid_states = np.array_split(grid_states, self.n_row)
+        grid_states = np.vstack(grid_states).T  # [::-1].T
+        print("grid states: \n", grid_states)
+
+        self.grid_states = grid_states
+
+    #
+    def state_index_to_point(self, state):
+        """
+        Convert a state index to the coordinate representing it.
+
+        Args:
+            state: Integer representing the state.
+
+        Returns:
+            The coordinate as tuple of integers representing the same state
+            as the index.
+        """
+        return state % self.size, state // self.size
+
+    #
+    def state_point_to_index(self, state):
+        """
+        Convert a state coordinate to the index representing it.
+
+        Note:
+            Does not check if coordinates lie outside of the world.
+
+        Args:
+            state: Tuple of integers representing the state.
+
+        Returns:
+            The index as integer representing the same state as the given
+            coordinate.
+        """
+        return state[1] * self.size + state[0]
+
+    #
+    def state_point_to_index_clipped(self, state):
+        """
+        Convert a state coordinate to the index representing it, while also
+        handling coordinates that would lie outside of this world.
+
+        Coordinates that are outside of the world will be clipped to the
+        world, i.e. projected onto to the nearest coordinate that lies
+        inside this world.
+
+        Useful for handling transitions that could go over an edge.
+
+        Args:
+            state: The tuple of integers representing the state.
+
+        Returns:
+            The index as integer representing the same state as the given
+            coordinate if the coordinate lies inside this world, or the
+            index to the closest state that lies inside the world.
+        """
+        s = (max(0, min(self.size - 1, state[0])), max(0, min(self.size - 1, state[1])))
+        return self.state_point_to_index(s)
+
+    #
+    def state_index_transition(self, s, a):
+        """
+        Perform action `a` at state `s` and return the intended next state.
+
+        Does not take into account the transition probabilities. Instead it
+        just returns the intended outcome of the given action taken at the
+        given state, i.e. the outcome in case the action succeeds.
+
+        Args:
+            s: The state at which the action should be taken.
+            a: The action that should be taken.
+
+        Returns:
+            The next state as implied by the given action and state.
+        """
+        s = self.state_index_to_point(s)
+        s = s[0] + self.actions[a][0], s[1] + self.actions[a][1]
+        return self.state_point_to_index_clipped(s)
+
+    #
+    def _transition_prob_table(self):
+        """
+        Builds the internal probability transition table.
+
+        Returns:
+            The probability transition table of the form
+
+                [state_from, state_to, action]
+
+            containing all transition probabilities. The individual
+            transition probabilities are defined by `self._transition_prob'.
+        """
+        table = np.zeros(shape=(self.n_states, self.n_states, self.n_actions))
+
+        s1, s2, a = range(self.n_states), range(self.n_states), range(self.n_actions)
+        for s_from, s_to, a in product(s1, s2, a):
+            table[s_from, s_to, a] = self._transition_prob(s_from, s_to, a)
+
+        return table
+
+    #
+    def _transition_prob(self, s_from, s_to, a):
+        """
+        Compute the transition probability for a single transition.
+
+        Args:
+            s_from: The state in which the transition originates.
+            s_to: The target-state of the transition.
+            a: The action via which the target state should be reached.
+
+        Returns:
+            The transition probability from `s_from` to `s_to` when taking
+            action `a`.
+        """
+        fx, fy = self.state_index_to_point(s_from)
+        tx, ty = self.state_index_to_point(s_to)
+        ax, ay = self.actions[a]
+
+        # deterministic transition defined by action
+        if fx + ax == tx and fy + ay == ty:
+            return 1.0
+
+        # we can stay at the same state if we would move over an edge
+        if fx == tx and fy == ty:
+            if not 0 <= fx + ax < self.size or not 0 <= fy + ay < self.size:
+                return 1.0
+
+        # otherwise this transition is impossible
+        return 0.0
+
+    def __repr__(self):
+        return "GridWorld(size={})".format(self.size)
 
 #
-def compute_trajectories_from_data(track,
-                                   box_width,
-                                   box_height,
-                                   remove_no_movement_states_flag=True,
+def compute_trajectories_from_data(world,
+                                   track,
                                    max_len_trajectory=20,
                                    grid_width=100,
                                    min_len_trajectory=10):
 
     #
     verbose = False
-
-    #
-    n_col = box_width // grid_width
-    n_row = box_height // grid_width
-
-    # make a 2d array holding all the state locations
-    n_states = n_row * n_col
-    print(" n states: ", n_states, ' n_col ', n_col, " n_row ", n_row)
-    grid_states = np.arange(n_states, dtype='int32')
-    grid_states = np.array_split(grid_states, n_row)
-    grid_states = np.vstack(grid_states).T  # [::-1].T
-    print("grid states: ", grid_states)
 
     # convert all trajectories to discrete grid world xy values
     track_xy = track.copy()
@@ -336,7 +492,7 @@ def compute_trajectories_from_data(track,
     track_xy1 = np.float32(track_xy1 // grid_width)
 
     #
-    track_states1 = np.int32(track_xy1[:, 0] + track_xy1[:, 1] * n_col)
+    track_states1 = np.int32(track_xy1[:, 0] + track_xy1[:, 1] * world.n_col)
 
     # list to save states of each animal
     states1 = []
@@ -355,7 +511,7 @@ def compute_trajectories_from_data(track,
                                           e_xy,
                                           s,
                                           e,
-                                          grid_states)
+                                          world.grid_states)
     # delete the state
     track_states1 = np.delete(track_states1, 0, axis=0)
     track_xy1 = np.delete(track_xy1, 0, axis=0)
@@ -385,7 +541,7 @@ def compute_trajectories_from_data(track,
                                                   e_xy,
                                                   s,
                                                   e,
-                                                  grid_states)
+                                                  world.grid_states)
 
             # TODO: note this conditional essentially removes all states where the gerbils do not do anything;
             # if remove_no_movement_states_flag:
@@ -427,30 +583,93 @@ def compute_trajectories_from_data(track,
         #
         ctr += 1
 
-    return states1, actions_xy1, n_col, n_row, grid_states
+    return states1, actions_xy1
+
+#
+class GerbilTrajectory():
+
+    # def __init__(self,
+    #              trajectory):
+    #
+    #     self.trajectory = trajectory
+    #     self._states = []
+    #
+    #     #
+    #     self.make_states()
+    #
+    # def make_states(self):
+    #
+    #     for s in self.trajectory:
+    #         self._states.append(s[0])
+    #
+    #     self._states.append(s[2])
+    #
+    # # function that return teh state
+    # def states(self):
+    #     return self._states
+
+    def __init__(self, transitions):
+        self._t = transitions
+
+    def transitions(self):
+        """
+        The transitions of this trajectory.
+
+        Returns:
+            All transitions in this trajectory as array of tuples
+            `(state_from, action, state_to)`.
+        """
+        return self._t
+
+    def states(self):
+        """
+        The states visited in this trajectory.
+
+        Returns:
+            All states visited in this trajectory as iterator in the order
+            they are visited. If a state is being visited multiple times,
+            the iterator will return the state multiple times according to
+            when it is visited.
+        """
+        return map(lambda x: x[0], chain(self._t, [(self._t[-1][2], 0, 0)]))
+
+    def __repr__(self):
+        return "Trajectory({})".format(repr(self._t))
+
+    def __str__(self):
+        return "{}".format(self._t)
 
 
+#
+def convert_trajectories_to_list_of_objects(ts):
 
-##################################################
-# # Let's start with the easy parts:
-# Remember that the gradient we need to compute for optimization is
-#
-# $$
-#     \nabla_\omega \mathcal{L}(\omega)
-#     = \underbrace{\mathbb{E}_{\pi^E} \left[ \phi(\tau) \right]}_{(1)}
-#         - \underbrace{\sum_{s_i} D_{s_i} \phi(s_i)}_{(2)},
-# $$
-#
-# so we first need to get the feature expectation $\mathbb{E}_{\pi^E} \left[ \phi(\tau) \right]$ (part (1)) from the trajectories of our trainings-set $\mathcal{D}$.
-# This is fairly simple, as for each trajectory we just need to check which states are going to be visited, sum the features of these states up (counting repetitions), and then at the end average over all trajectories, i.e.
-#
-# $$
-#     \mathbb{E}_{\pi^E} \left[ \phi(\tau) \right]
-#     = \frac{1}{|\mathcal{D}|} \sum_{\tau \in \mathcal{D}} \sum_{s_t \in \tau} \phi(s_t)
-# $$
-#
-# or as a function:
+    #
+    trajectories = []
+
+    # loop over trajectories
+    for ctr, t in enumerate(ts):
+
+        # make a trajectory object from transitions
+        trajectories.append(GerbilTrajectory(t))
+
+    return trajectories
+
 def feature_expectation_from_trajectories(features, trajectories):
+
+    ''' This is a function that "feature expectations", which is essentially the
+        count of how many times the agent visits some state. It is written in a weird way,
+        i.e. rather than keeping 1d array of scallars, fe and incrementing every time some state is visited, the
+        algorithm adds 1d arrays e.g. [1,0,0...0,0] to the fe array which has the same result in the end.
+
+    Args:
+        features: this is an identity matrix size of n_states of the world
+        trajectories: the list of trajectory objects
+
+    Returns:
+        fe: feature expetation which is # of visits to each state normalized by # of trajectories
+    '''
+
+
     n_states, n_features = features.shape
 
     fe = np.zeros(n_features)
